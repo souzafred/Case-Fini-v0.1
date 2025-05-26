@@ -1,8 +1,12 @@
 import React from 'react';
-import ReactDOM from 'react-dom/client';
-import SalesIntelligenceDashboard from './sales-intelligence-dashboard';
+import { createRoot } from 'react-dom/client';
+import SalesIntelligenceDashboard from './sales_intelligence_dashboard';
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
+const container = document.getElementById('root');
+if (!container) throw new Error('Elemento #root não encontrado');
+
+const root = createRoot(container);
+root.render(
   <React.StrictMode>
     <SalesIntelligenceDashboard />
   </React.StrictMode>
