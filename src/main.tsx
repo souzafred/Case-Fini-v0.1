@@ -1,6 +1,6 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import SalesIntelligenceDashboard from './sales_intelligence_dashboard';
+import SalesIntelligenceDashboard from './sales-intelligence-dashboard';
 
 const container = document.getElementById('root');
 if (!container) throw new Error('Elemento #root não encontrado');
