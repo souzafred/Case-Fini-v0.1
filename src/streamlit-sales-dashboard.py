@@ -400,9 +400,25 @@ with tab2:
     st.plotly_chart(fig2, use_container_width=True)
 
 
+import os
+from PIL import Image
+
 # ==== TAB 3: Recomendações ====
 with tab3:
-    st.info("💡 Em breve as Recomendações Estratégicas.")
+    # caminho relativo ao seu script
+    img_path = os.path.join(os.path.dirname(__file__), "recomends.png")  # ajuste o nome do arquivo
+
+    if os.path.exists(img_path):
+        img = Image.open(img_path)
+        # exibe em full width, mantendo boa resolução para leitura
+        st.image(
+            img,
+            caption="Recomendações Estratégicas",
+            use_column_width=True
+        )
+    else:
+        st.error(f"Arquivo de recomendações não encontrado em {img_path}")
+
 
 # ---- Footer ----
 st.markdown("---")
