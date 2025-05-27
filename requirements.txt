@@ -3,5 +3,4 @@ pandas
 numpy
 plotly
 scikit-learn
-calendar
-statsmodels>=0.14.0
+pillow
