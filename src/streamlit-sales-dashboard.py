@@ -5,7 +5,6 @@ import plotly.graph_objects as go
 import plotly.express as px
 from pathlib import Path
 
-import calendar
 
 # ---- Configuração da página ----
 st.set_page_config(
