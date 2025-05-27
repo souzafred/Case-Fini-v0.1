@@ -16,15 +16,22 @@ st.set_page_config(
 # ---- CSS customizado ----
 st.markdown("""
 <style>
-  .main { padding-top: 2rem; }
-  div[data-testid="metric-container"] {
-      background-color: white;
-      padding: 1rem;
-      border-radius: 0.5rem;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.12);
-  }
+/* Painel de fundo para as abas */
+div[role="tablist"] {
+    background-color: #111827 !important;  /* um tom escuro geral */
+    padding: 0.5rem 1rem !important;        /* espaço interno */
+    border-radius: 0.75rem 0.75rem 0 0 !important;  /* cantos superiores arredondados */
+    box-shadow: 0 4px 10px rgba(0,0,0,0.4) !important; /* leve sombra por trás */
+    margin-bottom: 1rem !important;
+}
+
+/* Remover underline interno (se ainda existir) */
+div[role="tablist"] .css-1au5rdh { 
+    border-bottom: none !important;
+}
 </style>
 """, unsafe_allow_html=True)
+
 
 # ---- Função de formatação de mês ----
 def format_month(s):
@@ -126,7 +133,7 @@ with tab1:
                                   .replace("X", "."))
     cresc_out = f"{growth_out:,.1f}".replace(".", ",") + "%"
     c4.metric("Crescimento", cresc_out, delta=cresc_out,
-              delta_color="normal" if growth_out>0 else "inverse")
+              delta_color="normal")
 
     # KPI Geral Sell-Through
     st.markdown(f"""
@@ -164,6 +171,7 @@ with tab1:
             text=[f"{v:.0f}%" for v in dfm['Rate']],
             textposition="top center",
             line=dict(color='#10b981',width=3,shape='spline'),
+            name = 'Sell-Through Rate',	
             marker=dict(size=8)
         ))
         fig.add_trace(go.Scatter(
@@ -188,6 +196,7 @@ with tab1:
             mode='lines+markers+text',
             text=[f"{v:.1f} Mi" for v in dfm['SellInMi']],
             textposition='top center',
+            name='Sell In (Milhões de R$)',
             line=dict(color='#8884d8',width=3,shape='spline'),
             marker=dict(size=6)
         ))
@@ -197,6 +206,7 @@ with tab1:
             text=[f"{v:.1f} Mi" for v in dfm['SellOutMi']],
             textposition='bottom center',
             line=dict(color='#82ca9d',width=3,shape='spline'),
+            name='Sell Out (Milhões de R$)',
             marker=dict(size=6)
         ))
         fig.update_layout(
@@ -247,7 +257,7 @@ with tab1:
 with tab2:
 
 
-    st.markdown("### 🔮 Forecast Estatístico")
+    st.markdown("### 🔮 Estudo e Cenários Forecast")
 
     # --- Dados históricos em Mi R$
     mi = sell_in.groupby('Month')['Valor_Total'].sum() / 1e6
@@ -347,7 +357,7 @@ with tab2:
     st.plotly_chart(fig1, use_container_width=True)
 
     # --- Gráfico 2: simulação de Sell-Through desejada ---
-    st.markdown("### 🔧 Simulação de Sell-Through Desejada (Jan/25–Jun/25)")
+    st.markdown("### 🔧 Simulação de Sell-Through (Jan/25–Jun/25)")
 
     left, right = st.columns(2)
     desired = []
@@ -402,15 +412,16 @@ from PIL import Image
 # ==== TAB 3: Recomendações ====
 with tab3:
     # caminho relativo ao seu script
-    img_path = os.path.join(os.path.dirname(__file__), "recomends.png")  # ajuste o nome do arquivo
+    img_path = os.path.join(os.path.dirname(__file__), "recomends.png")
 
     if os.path.exists(img_path):
         img = Image.open(img_path)
-        # exibe em full width, mantendo boa resolução para leitura
+        # exibe a imagem em largura máxima de 800px para manter proporção e boa leitura
         st.image(
             img,
             caption="Recomendações Estratégicas",
-            use_column_width=True
+            use_column_width=False,
+            width=800
         )
     else:
         st.error(f"Arquivo de recomendações não encontrado em {img_path}")
@@ -419,6 +430,6 @@ with tab3:
 # ---- Footer ----
 st.markdown("---")
 st.markdown(
-    "<p style='text-align:center;color:#6b7280;'>Desenvolvido com Streamlit + Plotly</p>",
+    "<p style='text-align:center;color:#6b7280;'>Desenvolvido por Alfredo Santos com Streamlit + Plotly</p>",
     unsafe_allow_html=True
 )
