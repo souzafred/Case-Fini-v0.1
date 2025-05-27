@@ -249,104 +249,144 @@ with tab1:
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.metrics import r2_score, mean_absolute_percentage_error
+from prophet import Prophet
 
 with tab2:
     if sell_in is None or sell_out is None:
         st.warning("⚠️ Faça upload de ambos os arquivos para ver o Forecast.")
     else:
-        st.markdown("### 🔮 Forecast & Métricas de Confiabilidade")
+        st.markdown("### 🔮 Forecast Elaborado (ML Features & Prophet)")
 
-        # Seleção de algoritmo
         alg = st.selectbox(
-            "Selecione o algoritmo de regressão:",
-            ["Linear Regression", "Random Forest", "Gradient Boosting"]
+            "Selecione o modelo:",
+            ["Linear Regression", "Random Forest", "Gradient Boosting", "Prophet"]
         )
 
-        # 1) Histórico em milhões
+        # 1) Base histórica em Mi
         mi = sell_in.groupby('Month')['Valor_Total'].sum() / 1e6
         mo = sell_out.groupby('Month')['Valor_SellThrough'].sum() / 1e6
-        df_hist = pd.DataFrame({
-            'Month': mi.index,
-            'SellInMi': mi.values,
+        df = pd.DataFrame({
+            'Month':     mi.index,
+            'SellInMi':  mi.values,
             'SellOutMi': mo.reindex(mi.index, fill_value=0).values
         }).reset_index(drop=True)
-        df_hist['M'] = df_hist['Month'].apply(format_month)
+        df['ds'] = pd.to_datetime(df['Month'] + '-01')
+        df['M']  = df['Month'].apply(format_month)
 
-        # 2) taxa média de Sell-Through
-        df_hist['Rate'] = df_hist['SellOutMi'] / df_hist['SellInMi']
-        avg_rate = df_hist['Rate'].mean()
+        # taxa média Sell-Through (decimal)
+        df['Rate'] = df['SellOutMi'] / df['SellInMi']
+        avg_rate  = df['Rate'].mean()
 
-        # 3) prepara X,y e split último 6 meses para teste
-        X = np.arange(len(df_hist)).reshape(-1,1)
-        y = df_hist['SellOutMi'].values
-        if len(X) > 6:
-            split = len(X) - 6
+        # feature time index + sazonalidade mensal
+        df['time_idx'] = np.arange(len(df))
+        df['month']    = df['ds'].dt.month
+        df['month_sin']= np.sin(2*np.pi*df['month']/12)
+        df['month_cos']= np.cos(2*np.pi*df['month']/12)
+
+        # train/test split (últimos 6 meses para teste)
+        X_feat = ['time_idx','month_sin','month_cos']
+        X = df[X_feat].values
+        y = df['SellOutMi'].values
+        if len(df) > 6:
+            split = len(df) - 6
             X_train, X_test = X[:split], X[split:]
             y_train, y_test = y[:split], y[split:]
         else:
             X_train, y_train = X, y
-            X_test, y_test = np.array([]).reshape(-1,1), np.array([])
+            X_test, y_test = np.empty((0,3)), np.empty((0,))
 
-        # 4) inicializa modelo
-        if alg == "Linear Regression":
-            model = LinearRegression()
-        elif alg == "Random Forest":
-            model = RandomForestRegressor(n_estimators=100, random_state=42)
-        else:
-            model = GradientBoostingRegressor(random_state=42)
+        # lógica Prophet vs ML
+        if alg != "Prophet":
+            # 2) treina ML
+            if alg=="Linear Regression":
+                model = LinearRegression()
+            elif alg=="Random Forest":
+                model = RandomForestRegressor(n_estimators=100, random_state=42)
+            else:
+                model = GradientBoostingRegressor(random_state=42)
 
-        # 5) treina e avalia
-        model.fit(X_train, y_train)
-        if len(X_test):
-            y_pred = model.predict(X_test)
-            mape = mean_absolute_percentage_error(y_test, y_pred)
-            r2   = r2_score(y_test, y_pred)
-            margin = mape * 100
-            accuracy = 100 - margin
-        else:
-            # poucos pontos, sem teste
-            mape = r2 = margin = accuracy = np.nan
+            model.fit(X_train, y_train)
+            if len(X_test):
+                y_pred = model.predict(X_test)
+                mape    = mean_absolute_percentage_error(y_test, y_pred)
+                r2      = r2_score(y_test, y_pred)
+                margin  = mape*100
+                accuracy= 100 - margin
+            else:
+                mape = r2 = margin = accuracy = np.nan
 
-        # 6) retrain completo e faz forecast de 6 meses
-        model.fit(X, y)
-        future_idx = np.arange(len(X), len(X)+6).reshape(-1,1)
-        out_fore = model.predict(future_idx)
-        out_fore = np.clip(out_fore, a_min=0, a_max=None)
-        in_fore  = out_fore / avg_rate
-
-        # gera labels dos próximos 6 meses
-        last_dt = pd.to_datetime(df_hist['Month'].iat[-1] + "-01")
-        future = []
-        for i, val_out, val_in in zip(range(1,7), out_fore, in_fore):
-            dt = last_dt + pd.DateOffset(months=i)
-            m_str = dt.strftime("%Y-%m")
-            future.append({
-                'M': format_month(m_str),
-                'SellOutMi': val_out,
-                'SellInMi': val_in
+            # 3) forecast ML
+            future_idx = np.arange(len(df), len(df)+6)
+            future_months = [df['ds'].iloc[-1] + pd.DateOffset(months=i) for i in range(1,7)]
+            fut = pd.DataFrame({
+                'ds': future_months
             })
-        df_fut = pd.DataFrame(future)
+            fut['time_idx']  = future_idx
+            fut['month']     = fut['ds'].dt.month
+            fut['month_sin'] = np.sin(2*np.pi*fut['month']/12)
+            fut['month_cos'] = np.cos(2*np.pi*fut['month']/12)
+            Xf = fut[X_feat].values
+            out_pred = model.predict(Xf).clip(min=0)
+            in_pred  = out_pred / avg_rate
 
-        # 7) Métricas de confiabilidade
+            # prepara df_all
+            df_hist = df[['M','SellOutMi','SellInMi']].copy()
+            df_fut  = pd.DataFrame({
+                'M': [format_month(d.strftime('%Y-%m')) for d in fut['ds']],
+                'SellOutMi': out_pred,
+                'SellInMi':  in_pred
+            })
+            df_all  = pd.concat([df_hist, df_fut], ignore_index=True)
+
+        else:
+            # Prophet
+            # split train/test para métricas
+            train_df = df.iloc[:-6][['ds','SellOutMi']].rename(columns={'SellOutMi':'y'})
+            test_df  = df.iloc[-6:][['ds','SellOutMi']].rename(columns={'SellOutMi':'y'})
+
+            m = Prophet(yearly_seasonality=True, weekly_seasonality=False, daily_seasonality=False)
+            m.fit(train_df)
+            future = m.make_future_dataframe(periods=6, freq='M')
+            fcst   = m.predict(future)
+
+            # métricas sobre test
+            pred_test = fcst.set_index('ds').loc[test_df['ds'], 'yhat'].values
+            y_test    = test_df['y'].values
+            mape      = mean_absolute_percentage_error(y_test, pred_test)
+            r2        = r2_score(y_test, pred_test)
+            margin    = mape*100
+            accuracy  = 100 - margin
+
+            # forecast
+            fcst_all   = m.predict(future)
+            # extrai últimos 6 de yhat
+            out_pred   = fcst_all['yhat'].iloc[-6:].values
+            in_pred    = out_pred / avg_rate
+            fut_months = fcst_all['ds'].iloc[-6:].dt
+
+            df_hist = df[['M','SellOutMi','SellInMi']].copy()
+            df_fut  = pd.DataFrame({
+                'M': [format_month(d.strftime('%Y-%m')) for d in fut_months],
+                'SellOutMi': out_pred,
+                'SellInMi':  in_pred
+            })
+            df_all  = pd.concat([df_hist, df_fut], ignore_index=True)
+
+        # 4) exibe métricas
         st.markdown("#### 📈 Métricas de Confiabilidade")
-        cp, cm, cr, cmape = st.columns(4)
-        cp.metric("Precisão do Modelo", f"{accuracy:.0f}%" if not np.isnan(accuracy) else "–")
-        cm.metric("Margem de Erro",    f"±{margin:.0f}%" if not np.isnan(margin) else "–")
-        cr.metric("R² Score",          f"{r2:.2f}" if not np.isnan(r2) else "–")
-        cmape.metric("MAPE",           f"{margin:.1f}%" if not np.isnan(margin) else "–")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Precisão do Modelo", f"{accuracy:.0f}%" if not np.isnan(accuracy) else "–")
+        c2.metric("Margem de Erro",    f"±{margin:.0f}%")
+        c3.metric("R² Score",          f"{r2:.2f}")
+        c4.metric("MAPE",              f"{margin:.1f}%")
 
-        # 8) Gráfico combinado
-        df_all = pd.concat([
-            df_hist[['M','SellOutMi','SellInMi']],
-            df_fut[['M','SellOutMi','SellInMi']]
-        ], ignore_index=True)
-
+        # 5) plota tudo
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=df_all['M'], y=df_all['SellOutMi'],
             mode='lines+markers+text',
             name='Sell Out (Mi)',
-            line=dict(color='#82ca9d', shape='spline', width=3),
+            line=dict(color='#82ca9d',shape='spline',width=3),
             text=[f"{v:.1f} Mi" for v in df_all['SellOutMi']],
             textposition='top center', marker=dict(size=6)
         ))
@@ -354,24 +394,24 @@ with tab2:
             x=df_all['M'], y=df_all['SellInMi'],
             mode='lines+markers+text',
             name='Sell In Ajustado (Mi)',
-            line=dict(color='#8884d8', shape='spline', width=3, dash='dash'),
+            line=dict(color='#8884d8',shape='spline',width=3,dash='dash'),
             text=[f"{v:.1f} Mi" for v in df_all['SellInMi']],
             textposition='bottom center', marker=dict(size=6)
         ))
         fig.update_layout(
             title="Forecast: Sell Out vs Sell In Ajustado",
-            xaxis=dict(tickangle=45), 
-            yaxis=dict(tickformat=".1f",ticksuffix=" Mi"),
-            hovermode='x unified', template="plotly_white", height=450
+            xaxis=dict(tickangle=45), yaxis=dict(tickformat=".1f",ticksuffix=" Mi"),
+            hovermode='x unified', template="plotly_white", height=500
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # 9) Cards de forecast
-        st.markdown("#### 📊 Projeções para os próximos 6 meses")
-        for row in future:
-            c1, c2 = st.columns(2)
-            c1.metric(f"{row['M']} – Sell Out",    f"{row['SellOutMi']:.1f} Mi")
-            c2.metric(f"{row['M']} – Sell In Ajustado", f"{row['SellInMi']:.1f} Mi")
+        # 6) cards de projeção
+        st.markdown("#### 📊 Projeções Próximos 6 Meses")
+        for _, row in df_fut.iterrows():
+            col1, col2 = st.columns(2)
+            col1.metric(f"{row['M']} – Sell Out",    f"{row['SellOutMi']:.1f} Mi")
+            col2.metric(f"{row['M']} – Sell In Ajustado", f"{row['SellInMi']:.1f} Mi")
+
 
 
 with tab3:
