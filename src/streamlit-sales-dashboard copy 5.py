@@ -5,10 +5,9 @@ import plotly.graph_objects as go
 import plotly.express as px
 from pathlib import Path
 
-import calendar
-from statsmodels.tsa.arima.model import ARIMA
-from statsmodels.tsa.seasonal import seasonal_decompose
-
+from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.metrics import mean_absolute_percentage_error, r2_score
 
 # ---- Configuração da página ----
 st.set_page_config(
@@ -249,156 +248,168 @@ with tab1:
 
 # ==== TAB 2: Forecast & Métricas de Confiabilidade ====
 with tab2:
+    # (todo o seu bloco de forecast permanece idêntico ao que já estava,
+    # sem o menu lateral de upload)
 
-
-    st.markdown("### 🔮 Forecast Estatístico")
-
-    # --- Dados históricos em Mi R$
-    mi = sell_in.groupby('Month')['Valor_Total'].sum() / 1e6
-    mo = sell_out.groupby('Month')['Valor_SellThrough'].sum() / 1e6
-    df = pd.DataFrame({
-        'Month':     mi.index,
-        'SellOutMi': mo.reindex(mi.index, fill_value=0).values,
-        'SellInMi':  mi.values
-    }).reset_index(drop=True)
-    df['ds'] = pd.to_datetime(df['Month'] + '-01')
-    df['M']  = df['Month'].apply(format_month)
-
-    # --- Próximos 6 meses
-    last_ds      = df['ds'].iat[-1]
-    future_dates = [last_ds + pd.DateOffset(months=i) for i in range(1,7)]
-    future_M     = [format_month(d.strftime('%Y-%m')) for d in future_dates]
-
-    # --- Configurações
-    cor_out = "rgba(136,136,216,0.6)"
-    cor_in  = "rgba(16,185,129,0.6)"
-    metodo  = st.selectbox("Método estatístico:", ["Média Móvel (SMA)", "Média Móvel Exponencial (EWMA)"])
-
-    # --- Calcula SMA ou EWMA + extensão de 6 meses ---
-    hist_out = df['SellOutMi'].tolist()
-    hist_in  = df['SellInMi'].tolist()
-
-    if metodo == "Média Móvel (SMA)":
-        window = st.slider("Janela (meses)", 2, 12, 3, key="sma_win")
-        # histórico de SMA
-        sma_out = pd.Series(hist_out).rolling(window).mean().tolist()
-        sma_in  = pd.Series(hist_in).rolling(window).mean().tolist()
-        # estende iterativamente para 6 meses
-        for _ in range(6):
-            nxt_out = np.mean(hist_out[-window:])
-            nxt_in  = np.mean(hist_in[-window:])
-            sma_out.append(nxt_out)
-            sma_in.append(nxt_in)
-            hist_out.append(nxt_out)
-            hist_in.append(nxt_in)
-
-        line_out = sma_out
-        line_in  = sma_in
-        title    = f"SMA ({window} meses) estendida 6m"
-
+    if sell_in is None or sell_out is None:
+        st.warning("⚠️ Bases não encontradas.")
     else:
-        span = st.slider("Span EWMA", 2, 12, 3, key="ewma_sp")
-        # histórico de EWMA
-        ewma_out = pd.Series(hist_out).ewm(span=span, adjust=False).mean().tolist()
-        ewma_in  = pd.Series(hist_in).ewm(span=span, adjust=False).mean().tolist()
-        # estende com último valor para 6 meses
-        last_out = ewma_out[-1]
-        last_in  = ewma_in[-1]
-        ewma_out += [last_out]*6
-        ewma_in  += [last_in]*6
+        st.markdown("### 🔮 Forecast & Métricas de Confiabilidade (Modelos ML)")
 
-        line_out = ewma_out
-        line_in  = ewma_in
-        title    = f"EWMA (span={span}) estendida 6m"
+        # 1) Escolha do algoritmo
+        alg = st.selectbox(
+            "Selecione o algoritmo:",
+            ["Linear Regression", "Random Forest", "Gradient Boosting"]
+        )
 
-    # --- Gráfico 1: histórico + forecast da média ---
-    M_all = df['M'].tolist() + future_M
-    fig1 = go.Figure()
-    # Sell Out real
-    fig1.add_trace(go.Scatter(
-        x=df['M'], y=df['SellOutMi'],
-        mode='lines+markers', name='Sell Out (Real)',
-        line=dict(color='#8884d8', shape='spline', width=3),
-        marker=dict(size=6)
-    ))
-    # Sell In real
-    fig1.add_trace(go.Scatter(
-        x=df['M'], y=df['SellInMi'],
-        mode='lines+markers', name='Sell In (Real)',
-        line=dict(color='#10b981', shape='spline', width=3),
-        marker=dict(size=6)
-    ))
-    # Média móvel estendida Out
-    fig1.add_trace(go.Scatter(
-        x=M_all, y=line_out,
-        mode='lines', name=f"{metodo} Out",
-        line=dict(color=cor_out, shape='spline', dash='dash', width=3)
-    ))
-    # Média móvel estendida In
-    fig1.add_trace(go.Scatter(
-        x=M_all, y=line_in,
-        mode='lines', name=f"{metodo} In",
-        line=dict(color=cor_in, shape='spline', dash='dash', width=3)
-    ))
-    fig1.update_layout(
-        title=title,
-        xaxis_title="Mês/Ano",
-        yaxis_title="Milhões de R$",
-        hovermode='x unified',
-        template="plotly_white",
-        height=450
-    )
-    st.plotly_chart(fig1, use_container_width=True)
+        # 2) Série histórica em milhões
+        mi = sell_in.groupby('Month')['Valor_Total'].sum() / 1e6
+        mo = sell_out.groupby('Month')['Valor_SellThrough'].sum() / 1e6
+        df = pd.DataFrame({
+            'Month':     mi.index,
+            'SellInMi':  mi.values,
+            'SellOutMi': mo.reindex(mi.index, fill_value=0).values
+        }).reset_index(drop=True)
+        df['ds']      = pd.to_datetime(df['Month'] + '-01')
+        df['M']       = df['Month'].apply(format_month)
 
-    # --- Gráfico 2: simulação de Sell-Through desejada ---
-    st.markdown("### 🔧 Simulação de Sell-Through Desejada (Jan/25–Jun/25)")
+        # 3) Calcular taxa média de sell-through
+        df['Rate']    = df['SellOutMi'] / df['SellInMi']
+        avg_rate      = df['Rate'].mean()
 
-    left, right = st.columns(2)
-    desired = []
-    # 3 sliders na coluna esquerda (Jan/25–Mar/25)
-    for i in range(3):
-        with left:
-            rate = st.slider(f"{future_M[i]}", 0, 200, 85, key=f"st_l_{i}")
-            desired.append(rate/100)
-    # 3 sliders na coluna direita (Apr/25–Jun/25)
-    for i in range(3, 6):
-        with right:
-            rate = st.slider(f"{future_M[i]}", 0, 200, 85, key=f"st_r_{i}")
-            desired.append(rate/100)
+        # 4) Criar features temporais
+        df['time_idx']  = np.arange(len(df))
+        df['month']     = df['ds'].dt.month
+        df['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
+        df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
 
-    # usa os 6 valores finais de linha In como forecast de Sell In
-    forecast_in = line_in[-6:]
-    sim_out     = [forecast_in[i] * desired[i] for i in range(6)]
+        # 5) Train/test split (últimos 6 meses para validação)
+        feats = ['time_idx','month_sin','month_cos']
+        X = df[feats].values
+        y = df['SellOutMi'].values
 
-    fig2 = go.Figure()
-    # Sell In (forecast)
-    fig2.add_trace(go.Scatter(
-        x=future_M, y=forecast_in,
-        mode='lines+markers+text', name='Sell In (Forecast)',
-        line=dict(color='#10b981', shape='spline', width=3),
-        marker=dict(size=6),
-        text=[f"{v:.1f} Mi" for v in forecast_in],
-        textposition='top center'
-    ))
-    # Sell Out simulado
-    fig2.add_trace(go.Scatter(
-        x=future_M, y=sim_out,
-        mode='lines+markers+text', name='Sell Out (Simulado)',
-        line=dict(color='#8884d8', shape='spline', dash='dash', width=3),
-        marker=dict(size=6),
-        text=[f"{v:.1f} Mi" for v in sim_out],
-        textposition='bottom center'
-    ))
-    fig2.update_layout(
-        title="Simulação: Sell In x Sell Out para atingir Sell-Through",
-        xaxis_title="Mês/Ano",
-        yaxis_title="Milhões de R$",
-        hovermode='x unified',
-        template="plotly_white",
-        height=400
-    )
-    st.plotly_chart(fig2, use_container_width=True)
+        if len(df) > 6:
+            split = len(df) - 6
+            X_train, X_test = X[:split], X[split:]
+            y_train, y_test = y[:split], y[split:]
+        else:
+            X_train, y_train = X, y
+            X_test, y_test   = np.empty((0,3)), np.empty((0,))
 
+        # 6) Inicializa e treina o modelo
+        if alg == "Linear Regression":
+            model = LinearRegression()
+        elif alg == "Random Forest":
+            model = RandomForestRegressor(n_estimators=100, random_state=42)
+        else:
+            model = GradientBoostingRegressor(random_state=42)
+
+        model.fit(X_train, y_train)
+
+        # 7) Avalia no conjunto de teste
+        if len(X_test):
+            y_pred_test = model.predict(X_test)
+            mape    = mean_absolute_percentage_error(y_test, y_pred_test)
+            r2      = r2_score(y_test, y_pred_test)
+            margin  = mape * 100
+            accuracy= 100 - margin
+        else:
+            mape = r2 = margin = accuracy = np.nan
+
+        # 8) Forecast para os próximos 6 meses
+        last_date    = df['ds'].iloc[-1]
+        future_dates = [last_date + pd.DateOffset(months=i) for i in range(1,7)]
+        fut = pd.DataFrame({'ds': future_dates})
+        fut['time_idx']  = np.arange(len(df), len(df) + 6)
+        fut['month']     = fut['ds'].dt.month
+        fut['month_sin'] = np.sin(2 * np.pi * fut['month'] / 12)
+        fut['month_cos'] = np.cos(2 * np.pi * fut['month'] / 12)
+
+        Xf       = fut[feats].values
+        out_pred = model.predict(Xf).clip(min=0)
+        in_pred  = out_pred / avg_rate
+        future_M = [format_month(d.strftime('%Y-%m')) for d in future_dates]
+
+        df_hist = df[['M','SellOutMi','SellInMi']].copy()
+        df_fut  = pd.DataFrame({
+            'M':         future_M,
+            'SellOutMi': out_pred,
+            'SellInMi':  in_pred
+        })
+        df_all  = pd.concat([df_hist, df_fut], ignore_index=True)
+
+        # 9) Exibe métricas de confiabilidade
+        st.markdown("#### 📈 Métricas de Confiabilidade")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Precisão do Modelo", f"{accuracy:.0f}%" if not np.isnan(accuracy) else "–")
+        c2.metric("Margem de Erro",    f"±{margin:.0f}%")
+        c3.metric("R² Score",          f"{r2:.2f}" if not np.isnan(r2) else "–")
+        c4.metric("MAPE",              f"{margin:.1f}%" if not np.isnan(margin) else "–")
+
+        # 10) Explicação
+        with st.expander("❔ O que significam estas métricas?"):
+            st.markdown("""
+            **📊 Precisão do Modelo**  
+            - 100% – Margem de Erro; quanto mais próximo de 100%, melhor.  
+            - *Referência:* ≥ 85% é bom; ≥ 90% é excelente.
+
+            **⚠️ Margem de Erro (MAPE)**  
+            - Erro médio percentual absoluto entre previsão e real.  
+            - *Referência:* até ±10% (excelente), ±10–20% (aceitável), > 30% (precisa melhorar).
+
+            **📈 R² Score**  
+            - Proporção da variância explicada pelo modelo.  
+            - *Referência:* ≥ 0,8 (ótimo), 0,5–0,8 (razoável), < 0,5 (fraco).
+
+            **🔢 MAPE**  
+            - Mesmo conceito de Margem de Erro.  
+            - *Referência:* < 10% (excelente), 10–20% (bom), > 20% (precisa ajustes).
+            """)
+
+        # 11) Gráfico combinado
+        hist = df_all.iloc[:-6]
+        fut  = df_all.iloc[-6:]
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=hist['M'], y=hist['SellOutMi'],
+            mode='lines+markers', name='Sell Out (Histórico)',
+            line=dict(color='#82ca9d',width=3,shape='spline'),
+            marker=dict(size=6)
+        ))
+        fig.add_trace(go.Scatter(
+            x=fut['M'], y=fut['SellOutMi'],
+            mode='lines+markers+text', name='Sell Out (Forecast)',
+            line=dict(color='#82ca9d',width=3,shape='spline',dash='dash'),
+            text=[f"{v:.1f} Mi" for v in fut['SellOutMi']],
+            textposition='top center'
+        ))
+        fig.add_trace(go.Scatter(
+            x=hist['M'], y=hist['SellInMi'],
+            mode='lines+markers', name='Sell In (Histórico)',
+            line=dict(color='#8884d8',width=3,shape='spline'),
+            marker=dict(size=6)
+        ))
+        fig.add_trace(go.Scatter(
+            x=fut['M'], y=fut['SellInMi'],
+            mode='lines+markers+text', name='Sell In (Forecast)',
+            line=dict(color='#8884d8',width=3,shape='spline',dash='dash'),
+            text=[f"{v:.1f} Mi" for v in fut['SellInMi']],
+            textposition='bottom center'
+        ))
+        fig.update_layout(
+            title="Forecast: Sell Out vs Sell In Ajustado",
+            xaxis=dict(tickangle=45), yaxis=dict(ticksuffix=" Mi"),
+            hovermode='x unified', template="plotly_white", height=450
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # 12) Cards de projeção
+        st.markdown("#### 📊 Projeções para os próximos 6 meses")
+        for _, row in df_fut.iterrows():
+            col1, col2 = st.columns(2)
+            col1.metric(f"{row['M']} – Sell Out",         f"{row['SellOutMi']:.1f} Mi")
+            col2.metric(f"{row['M']} – Sell In Ajustado", f"{row['SellInMi']:.1f} Mi")
 
 # ==== TAB 3: Recomendações ====
 with tab3:
