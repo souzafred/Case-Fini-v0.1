@@ -6,8 +6,7 @@ import plotly.express as px
 from pathlib import Path
 
 import calendar
-from statsmodels.tsa.arima.model import ARIMA
-from statsmodels.tsa.seasonal import seasonal_decompose
+
 
 
 # ---- Configuração da página ----
