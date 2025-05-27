@@ -7,8 +7,6 @@ from pathlib import Path
 
 import calendar
 
-
-
 # ---- Configuração da página ----
 st.set_page_config(
     page_title="Dashboard de Inteligência Comercial",
